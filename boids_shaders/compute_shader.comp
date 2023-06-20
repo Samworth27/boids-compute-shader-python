@@ -1,0 +1,137 @@
+#version 430
+
+// Set up our compute groups
+layout(local_size_x = COMPUTE_SIZE_X, local_size_y = COMPUTE_SIZE_Y) in;
+
+uniform vec2 window_size;
+uniform float frame_time;
+uniform vec2 mouse_position;
+
+// Structure of the boid data
+struct Boid {
+  vec4 pos;
+  vec4 vel;
+  vec4 color;
+};
+
+// Input buffer
+layout(std430, binding = 0) buffer boids_in { Boid boids[]; }
+In;
+
+// Output buffer
+layout(std430, binding = 1) buffer boids_out { Boid boids[]; }
+Out;
+
+void main() {
+  int curBoidIndex = int(gl_GlobalInvocationID);
+
+  Boid in_boid = In.boids[curBoidIndex];
+  vec4 p = in_boid.pos.xyzw;
+  vec4 v = in_boid.vel.xyzw;
+  vec4 c = in_boid.color.xyzw;
+  // 
+  float visual_range = 100.0;
+  float avoidance_range = 20.0;
+  float obstacle_avoidance_range = 60;
+  float separation_factor = 1;
+  float cohesion_factor = 1;
+  float alignment_factor = 1;
+  float obstacle_avoidance_factor = 10;
+  float turn_factor = 0.1;
+
+  // Move the boid according to the current force
+  p.xy += v.xy * frame_time * 100;
+
+  vec2 cohesion_vector = vec2(0, 0);
+  vec2 group_direction = vec2(0, 0);
+  int cohesion_n = 0;
+
+  vec2 avoidance_vector = vec2(0, 0);
+  int avoidance_n = 0;
+
+  vec2 mouse_vector = vec2(0, 0);
+  float mouse_dist = distance(mouse_position, p.xy);
+  if (mouse_dist < obstacle_avoidance_range) {
+    float mouse_dist_squared = mouse_dist * mouse_dist;
+    mouse_vector += (mouse_position - p.xy) * 1/mouse_dist;
+  }
+
+  for (int i = 0; i < curBoidIndex; i++) {
+    Boid target = In.boids[i];
+    float dist = distance(target.pos.xy, p.xy);
+    float dist_squared = dist * dist;
+    if (dist < visual_range) {
+      cohesion_vector += (target.pos.xy - p.xy) * 1 / dist_squared;
+      group_direction += target.vel.xy;
+      cohesion_n++;
+    }
+    if (dist < avoidance_range) {
+      avoidance_vector += (target.pos.xy - p.xy) * 1 / dist_squared;
+    }
+  }
+
+  for (int i = curBoidIndex + 1; i < In.boids.length(); i++) {
+    Boid target = In.boids[i];
+    float dist = distance(target.pos.xy, p.xy);
+    float dist_squared = dist * dist;
+    if (dist < visual_range) {
+      cohesion_vector += (target.pos.xy - p.xy) * 1 / dist_squared;
+      group_direction += target.vel.xy;
+      cohesion_n++;
+    }
+    if (dist < avoidance_range) {
+      avoidance_vector += (target.pos.xy - p.xy) * 1 / dist_squared;
+    }
+  }
+
+  if (cohesion_n > 0) {
+    cohesion_vector = cohesion_vector / cohesion_n;
+    group_direction = group_direction / cohesion_n;
+  }
+  if (avoidance_n > 0) {
+    avoidance_vector = avoidance_vector / avoidance_n;
+  }
+
+  vec2 force_m = normalize(v.xy - mouse_vector);
+  vec2 force_c = normalize(v.xy - (cohesion_vector));
+  vec2 force_s = normalize(v.xy - avoidance_vector);
+  vec2 force_a = normalize((group_direction.xy - v.xy));
+
+  v.xy += force_c * cohesion_factor;
+  v.xy += force_s * separation_factor;
+  if (length(force_a) > 0) {
+    v.xy += force_a * alignment_factor;
+  }
+
+  if (length(force_m) > 0) {
+    v.xy += force_m * obstacle_avoidance_factor;
+  }
+
+  if (length(v.xy) > 2) {
+    v = normalize(v) * 2;
+  }
+
+  // Edges
+  if (p.x < 100) {
+    v.x += turn_factor;
+  }
+
+  if (p.x > window_size.x - 100) {
+    v.x -= turn_factor;
+  }
+  if (p.y < 100) {
+    v.y += turn_factor;
+  }
+
+  if (p.y > window_size.y - 100) {
+    v.y -= turn_factor;
+  }
+
+  Boid out_boid;
+  out_boid.pos.xyzw = p.xyzw;
+  out_boid.vel.xyzw = v.xyzw;
+
+  out_boid.color.xyzw = c.xyzw;
+
+  Out.boids[curBoidIndex] = out_boid;
+}
